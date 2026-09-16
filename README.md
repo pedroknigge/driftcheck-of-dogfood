@@ -317,7 +317,7 @@ pre-commit install
 
 ### Stats
 
-- **61 detector modules** covering 50+ toolchains and file formats
+- **62 detector modules** covering 50+ toolchains and file formats
 - **68 registered detectors** (including split environment detectors, lockfile variants, and plugin system)
 - **1105 tests** with >95% code coverage
 - **SARIF 2.1.0** output for GitHub Code Scanning
@@ -341,6 +341,7 @@ pre-commit install
 | Docker | docker | `docker_drifts` | Dockerfile FROM tag |
 | Docker | docker-bases | `docker_bases_drifts` | Floating/unpinned base images |
 | Docker | docker-multistage | `docker_multistage_drifts` | Multi-stage Dockerfile conflicting tags |
+| Docker | dockerfile-instructions | `dockerfile_instructions_drifts` | Dockerfile instruction drift (EXPOSE, HEALTHCHECK, WORKDIR, ENTRYPOINT, USER) |
 | Editor/IDE | editorconfig | `editorconfig_drifts` | .editorconfig vs README/IDE indent |
 | Editor/IDE | vscode-ext | `vscode_ext_drifts` | VSCode extensions.json vs README recommendations |
 | Elixir | elixir | `elixir_drifts` | Elixir mix.exs version |
