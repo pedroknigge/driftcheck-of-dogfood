@@ -1,4 +1,3 @@
-import sys
 """driftcheck CLI."""
 from __future__ import annotations
 import argparse
@@ -6,6 +5,7 @@ import csv
 import json
 import io
 import difflib
+import sys
 from pathlib import Path
 from .detector import scan_repo, apply_fixes
 from .sarif import to_sarif
@@ -276,6 +276,7 @@ def main(argv=None) -> int:
     ap.add_argument("--fix", action="store_true", help="auto-fix detected drifts in documentation files")
     ap.add_argument("--version", action="version", version=_version())
     ap.add_argument("--quiet", "-q", action="store_true", help="only output drifts, suppress OK messages")
+    ap.add_argument("--verbose", "-v", action="store_true", help="print each file-read failure reason")
     ap.add_argument("--no-informational", action="store_true", help="skip informational drifts in output")
     ap.add_argument("--list-detectors", action="store_true", help="list available detectors and exit")
     ap.add_argument("--only", metavar="DETECTOR", help="run only specified detectors (comma-separated)")
@@ -312,6 +313,7 @@ def main(argv=None) -> int:
 
     if args.report:
         _print_report(result)
+        _print_read_failures(result, verbose=args.verbose, to_stderr=True)
         blocking = {k: result.get(k, []) for k in DRIFT_KEYS if k not in INFORMATIONAL_DRIFTS}
         return 1 if any(blocking.values()) else 0
 
@@ -339,6 +341,7 @@ def main(argv=None) -> int:
         root = Path(args.path) if not args.absolute_paths else None
         sarif_doc = to_sarif(result, version=__version__, root=root)
         print(json.dumps(sarif_doc, indent=2))
+        _print_read_failures(result, verbose=args.verbose, to_stderr=True)
         blocking = {k: result.get(k, []) for k in DRIFT_KEYS if k not in INFORMATIONAL_DRIFTS}
         return 1 if any(blocking.values()) else 0
 
@@ -347,6 +350,7 @@ def main(argv=None) -> int:
 
     if args.as_csv:
         _print_csv(result)
+        _print_read_failures(result, verbose=args.verbose, to_stderr=True)
         blocking = {k: result.get(k, []) for k in DRIFT_KEYS if k not in INFORMATIONAL_DRIFTS}
         return 1 if any(blocking.values()) else 0
 
@@ -367,6 +371,7 @@ def main(argv=None) -> int:
 
     if args.as_json:
         print(json.dumps(result, indent=2))
+        _print_read_failures(result, verbose=args.verbose, to_stderr=True)
         return 1 if has_blocking else 0
 
     tv = result.get("toolchain_version")
@@ -407,6 +412,7 @@ def main(argv=None) -> int:
     if not has_toolchain and not has_any_drift:
         if not args.quiet:
             print("driftcheck: no toolchain version found")
+        _print_read_failures(result, verbose=args.verbose, to_stderr=False)
         return 0
 
     # No blocking drifts — print OK, then informational drifts
@@ -422,6 +428,7 @@ def main(argv=None) -> int:
             print(base)
         if not args.no_informational:
             _print_informational(all_drifts)
+        _print_read_failures(result, verbose=args.verbose, to_stderr=False)
         return 0
 
     # Print blocking drifts
@@ -429,6 +436,7 @@ def main(argv=None) -> int:
     # Also print informational drifts
     if not args.no_informational:
         _print_informational(all_drifts)
+    _print_read_failures(result, verbose=args.verbose, to_stderr=False)
     return 1
 
 
@@ -469,11 +477,16 @@ def _print_report(result: dict) -> None:
     total_informational = sum(len(v) for v in informational.values())
     total_drifts = total_blocking + total_informational
 
-    if total_drifts > 0:
+    failed_files = result.get("failed_files") or []
+    failed_count = result.get("failed_file_count", len(failed_files))
+
+    if total_drifts > 0 or failed_count:
         print("### 📊 Summary\n")
         print(f"- **Total drifts:** {total_drifts}")
         print(f"  - ❌ Blocking: {total_blocking}")
         print(f"  - ℹ️  Informational: {total_informational}")
+        if failed_count:
+            print(f"- **Failed files:** {failed_count}")
 
         # Detector breakdown
         detectors_fired = []
@@ -612,6 +625,18 @@ def _list_detectors() -> None:
     for key, (short, desc) in DETECTOR_INFO.items():
         blocking = "blocking" if key not in INFORMATIONAL_DRIFTS else "informational"
         print(f"  {short:20s} [{blocking:14s}] {desc}")
+
+
+def _print_read_failures(result: dict, *, verbose: bool, to_stderr: bool) -> None:
+    """Print failed-file count (scan summary) and optional per-file reasons."""
+    failed = result.get("failed_files") or []
+    if not failed:
+        return
+    stream = sys.stderr if to_stderr else sys.stdout
+    print(f"driftcheck: {len(failed)} file(s) failed to read", file=stream)
+    if verbose:
+        for item in failed:
+            print(f"driftcheck: failed to read {item.get('path', '?')}: {item.get('error', '')}", file=sys.stderr)
 
 
 def _print_blocking_drifts(all_drifts: dict, result: dict) -> None:

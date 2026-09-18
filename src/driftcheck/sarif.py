@@ -644,20 +644,54 @@ def to_sarif(result: dict, version: str | None = None, root: Path | None = None)
                 "suppressions": [{"kind": "inSource", "justification": "follow_symlinks=false policy"}],
             })
 
+    # Failed / unreadable files (issue #178) — run.properties.skippedFiles plus
+    # suppressed note results so GitHub Code Scanning can surface them.
+    failed_files = result.get("failed_files") or result.get("_skipped_files") or []
+    if failed_files:
+        rule_id = "file-read-failed"
+        if rule_id not in rule_set:
+            rules.append({
+                "id": rule_id,
+                "name": "File Read Failed",
+                "shortDescription": {"text": "A file could not be read (binary, permission denied, or inaccessible)."},
+                "defaultConfiguration": {"level": "note"},
+            })
+            rule_set.add(rule_id)
+        for item in failed_files:
+            path = item.get("path", "") if isinstance(item, dict) else str(item)
+            error = item.get("error", "unreadable") if isinstance(item, dict) else "unreadable"
+            uri = _make_relative_path(path, root)
+            results.append({
+                "ruleId": rule_id,
+                "level": "note",
+                "message": {"text": f"Skipped '{uri}': {error}"},
+                "locations": [
+                    {
+                        "physicalLocation": {
+                            "artifactLocation": {"uri": uri},
+                            "region": {"startLine": 1, "startColumn": 1},
+                        }
+                    }
+                ],
+                "suppressions": [{"kind": "inSource", "justification": error}],
+            })
+
+    run: dict = {
+        "tool": {
+            "driver": {
+                "name": "driftcheck",
+                "version": version,
+                "informationUri": "https://github.com/yunaremaia/driftcheck",
+                "rules": rules,
+            }
+        },
+        "results": results,
+    }
+    if failed_files:
+        run["properties"] = {"skippedFiles": failed_files}
+
     return {
         "$schema": SARIF_SCHEMA,
         "version": "2.1.0",
-        "runs": [
-            {
-                "tool": {
-                    "driver": {
-                        "name": "driftcheck",
-                        "version": version,
-                        "informationUri": "https://github.com/yunaremaia/driftcheck",
-                        "rules": rules,
-                    }
-                },
-                "results": results,
-            }
-        ],
+        "runs": [run],
     }

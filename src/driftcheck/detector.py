@@ -82,12 +82,56 @@ def _safe_glob(root: Path, pattern: str, walked_files: set[Path], follow_symlink
             yield p
 
 
-def _read_text_safe(path: Path, max_size: int = 1_000_000) -> str | None:
+# Optional collector used by scan_repo() so sequential reads report the same
+# {path, error} pairs as _read_files_parallel() without changing every call site.
+_failure_sink: list[dict] | None = None
+_failure_root: Path | None = None
+
+
+def _rel_path(path: Path, root: Path | None) -> str:
+    if root is None:
+        return str(path)
+    try:
+        return str(path.relative_to(root))
+    except ValueError:
+        return str(path)
+
+
+def _record_read_failure(
+    path: Path,
+    error: str,
+    failures: list[dict] | None = None,
+    root: Path | None = None,
+) -> None:
+    dest = failures if failures is not None else _failure_sink
+    if dest is None:
+        return
+    rec = {"path": _rel_path(path, root if root is not None else _failure_root), "error": error}
+    if any(item["path"] == rec["path"] for item in dest):
+        return
+    dest.append(rec)
+
+
+def _safe_read(path: Path, max_size: int = 1_000_000) -> str:
+    """Read a text file or raise with a reason (binary, too large, OSError)."""
+    size = path.stat().st_size
+    if size > max_size:
+        raise ValueError(f"file too large ({size} bytes)")
+    # Binary heuristic: NUL in the first 512 bytes (issue #178)
+    with open(path, "rb") as f:
+        if b"\x00" in f.read(512):
+            raise ValueError("binary file detected")
+    return path.read_text(encoding="utf-8", errors="replace")
+
+
+def _read_text_safe(path: Path, max_size: int = 1_000_000, failures: list[dict] | None = None, root: Path | None = None) -> str | None:
     """Read text file safely, returning None if too large, binary, or unreadable.
 
     Args:
         path: file path to read
         max_size: maximum file size in bytes (default 1MB)
+        failures: optional list to append {path, error} pairs
+        root: repo root used to relativize failure paths
 
     Returns:
         File contents as string, or None if file doesn't exist, is too large,
@@ -96,16 +140,11 @@ def _read_text_safe(path: Path, max_size: int = 1_000_000) -> str | None:
     try:
         if not path.exists():
             return None
-        size = path.stat().st_size
-        if size > max_size:
-            return None
-        # Check for binary content (null bytes in first 8KB)
-        with open(path, "rb") as f:
-            chunk = f.read(8192)
-            if b"\x00" in chunk:
-                return None
-        return path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+        return _safe_read(path, max_size)
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as e:
+        _record_read_failure(path, str(e), failures, root)
         return None
 
 
@@ -195,34 +234,40 @@ from .detectors import (
 )
 
 
-def _read_files_parallel(root: Path, patterns: list[str]) -> str:
+def _read_files_parallel(root: Path, patterns: list[str], max_size: int = 1_000_000) -> tuple[str, list[dict]]:
     """Read multiple files in parallel using ThreadPoolExecutor.
 
-    Returns concatenated file contents separated by newlines.
+    Returns (concatenated contents, failures) where failures is a list of
+    {path, error} dicts for files that could not be read (issue #178).
     """
-    files = []
+    files: list[Path] = []
+    failures: list[dict] = []
     for pattern in patterns:
         for p in root.glob(pattern):
-            if p.is_file():
-                files.append(p)
+            try:
+                if p.is_symlink():
+                    p.resolve(strict=True)
+                if p.is_file():
+                    files.append(p)
+            except (OSError, RuntimeError) as e:
+                failures.append({
+                    "path": _rel_path(p, root),
+                    "error": str(e) or "symlink loop",
+                })
 
     if not files:
-        return ""
+        return "", failures
 
-    contents = []
+    contents: list[str] = []
     with ThreadPoolExecutor(max_workers=min(8, len(files))) as executor:
-        futures = {
-            executor.submit(_read_text_safe, p, max_size=1_000_000): p
-            for p in files
-        }
+        futures = {executor.submit(_safe_read, p, max_size): p for p in files}
         for future in as_completed(futures):
+            p = futures[future]
             try:
-                result = future.result()
-                if result is not None:
-                    contents.append(result)
-            except Exception:
-                pass
-    return "\n".join(contents)
+                contents.append(future.result())
+            except Exception as e:
+                failures.append({"path": _rel_path(p, root), "error": str(e)})
+    return "\n".join(contents), failures
 
 
 def scan_repo(root: Path = Path("."), enabled_detectors: set[str] | None = None, max_file_size: int | None = None) -> dict:
@@ -236,11 +281,16 @@ def scan_repo(root: Path = Path("."), enabled_detectors: set[str] | None = None,
         enabled_detectors: if set, only run these detector keys (skip others)
         max_file_size: override max file size in bytes (default from config: 1MB)
     """
+    global _failure_sink, _failure_root
     config = load_config(root)
     excluded = get_excluded_detectors(config)
     follow_symlinks = config.get("follow_symlinks", True)
     default_max_size = 1_000_000  # 1MB fallback
     max_file_size = max_file_size or config.get("max_file_size", default_max_size)
+    failed_files: list[dict] = []
+    prev_sink, prev_root = _failure_sink, _failure_root
+    _failure_sink = failed_files
+    _failure_root = root
 
     # Walk files with symlink policy (issue #128)
     walked_files, skipped_symlinks = _walk_files(root, follow_symlinks=follow_symlinks)
@@ -694,6 +744,11 @@ def scan_repo(root: Path = Path("."), enabled_detectors: set[str] | None = None,
     if skipped_symlinks:
         result["_skipped_symlinks"] = skipped_symlinks
 
+    # Read failures from _read_text_safe / _read_files_parallel (issue #178)
+    result["failed_files"] = failed_files
+    result["failed_file_count"] = len(failed_files)
+    _failure_sink = prev_sink
+    _failure_root = prev_root
     return result
 
 
