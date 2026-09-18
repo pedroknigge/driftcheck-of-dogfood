@@ -20,4 +20,4 @@
   - [x] Unit tests: permission-denied, binary content, symlink loop
 - false_green: no
 - stalls_needing_poke: none
-- PR or branch URL: see PR created on this fork (`pedroknigge/driftcheck-of-dogfood`), branch `cursor/fix-read-files-parallel-errors-c7e7`
+- PR or branch URL: https://github.com/pedroknigge/driftcheck-of-dogfood/pull/2 (branch `cursor/fix-read-files-parallel-errors-c7e7`)

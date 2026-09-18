@@ -2,6 +2,7 @@
 
 **State:** complete on this fork (`pedroknigge/driftcheck-of-dogfood`)
 **Branch:** `cursor/fix-read-files-parallel-errors-c7e7`
+**PR:** https://github.com/pedroknigge/driftcheck-of-dogfood/pull/2 (draft, this fork only)
 
 ## Finished
 
