@@ -644,20 +644,43 @@ def to_sarif(result: dict, version: str | None = None, root: Path | None = None)
                 "suppressions": [{"kind": "inSource", "justification": "follow_symlinks=false policy"}],
             })
 
+    skipped_files = result.get("_skipped_files") or []
+    if skipped_files:
+        rule_id = "file-read-skipped"
+        if rule_id not in rule_set:
+            rules.append({
+                "id": rule_id,
+                "name": "File Read Skipped",
+                "shortDescription": {"text": "A file was skipped because it was unreadable or binary."},
+                "defaultConfiguration": {"level": "note"},
+            })
+            rule_set.add(rule_id)
+        for entry in skipped_files:
+            path = entry.get("path", "") if isinstance(entry, dict) else str(entry)
+            error = entry.get("error", "unreadable") if isinstance(entry, dict) else "unreadable"
+            results.append({
+                "ruleId": rule_id,
+                "level": "note",
+                "message": {"text": f"Skipped '{path}': {error}"},
+                "suppressions": [{"kind": "inSource", "justification": error}],
+            })
+
+    run: dict = {
+        "tool": {
+            "driver": {
+                "name": "driftcheck",
+                "version": version,
+                "informationUri": "https://github.com/yunaremaia/driftcheck",
+                "rules": rules,
+            }
+        },
+        "results": results,
+    }
+    if skipped_files:
+        run["properties"] = {"skippedFiles": skipped_files}
+
     return {
         "$schema": SARIF_SCHEMA,
         "version": "2.1.0",
-        "runs": [
-            {
-                "tool": {
-                    "driver": {
-                        "name": "driftcheck",
-                        "version": version,
-                        "informationUri": "https://github.com/yunaremaia/driftcheck",
-                        "rules": rules,
-                    }
-                },
-                "results": results,
-            }
-        ],
+        "runs": [run],
     }

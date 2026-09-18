@@ -1,4 +1,3 @@
-import sys
 """driftcheck CLI."""
 from __future__ import annotations
 import argparse
@@ -6,6 +5,7 @@ import csv
 import json
 import io
 import difflib
+import sys
 from pathlib import Path
 from .detector import scan_repo, apply_fixes
 from .sarif import to_sarif
@@ -276,6 +276,7 @@ def main(argv=None) -> int:
     ap.add_argument("--fix", action="store_true", help="auto-fix detected drifts in documentation files")
     ap.add_argument("--version", action="version", version=_version())
     ap.add_argument("--quiet", "-q", action="store_true", help="only output drifts, suppress OK messages")
+    ap.add_argument("--verbose", "-v", action="store_true", help="print each file read failure reason")
     ap.add_argument("--no-informational", action="store_true", help="skip informational drifts in output")
     ap.add_argument("--list-detectors", action="store_true", help="list available detectors and exit")
     ap.add_argument("--only", metavar="DETECTOR", help="run only specified detectors (comma-separated)")
@@ -309,6 +310,7 @@ def main(argv=None) -> int:
             print(f"driftcheck: git-mode — {len(changed)} file(s) changed, {len(enabled_detectors)} detector(s) relevant")
 
     result = scan_repo(Path(args.path), enabled_detectors=enabled_detectors, max_file_size=args.max_file_size)
+    _print_read_failures(result, verbose=args.verbose, quiet=args.quiet, structured=args.as_json or args.as_sarif or args.as_csv)
 
     if args.report:
         _print_report(result)
@@ -432,6 +434,17 @@ def main(argv=None) -> int:
     return 1
 
 
+def _print_read_failures(result: dict, *, verbose: bool, quiet: bool, structured: bool) -> None:
+    """Print failed-file count (CLI summary) and optional per-file reasons."""
+    skipped = result.get("_skipped_files") or []
+    count = result.get("failed_file_count", len(skipped))
+    if count and not quiet and not structured:
+        print(f"driftcheck: {count} file(s) failed to read")
+    if verbose:
+        for item in skipped:
+            print(f"driftcheck: skip {item.get('path', '?')}: {item.get('error', '')}", file=sys.stderr)
+
+
 def _version() -> str:
     from . import __version__
     return f"%(prog)s {__version__}"
@@ -474,6 +487,9 @@ def _print_report(result: dict) -> None:
         print(f"- **Total drifts:** {total_drifts}")
         print(f"  - ❌ Blocking: {total_blocking}")
         print(f"  - ℹ️  Informational: {total_informational}")
+        failed = result.get("failed_file_count", 0)
+        if failed:
+            print(f"- **Failed files:** {failed}")
 
         # Detector breakdown
         detectors_fired = []
@@ -504,6 +520,10 @@ def _print_report(result: dict) -> None:
         print()
 
     if not has_blocking and not has_informational:
+        failed = result.get("failed_file_count", 0)
+        if failed:
+            print(f"- **Failed files:** {failed}")
+            print()
         print("✅ No drift detected — docs match toolchain.")
         return
 
