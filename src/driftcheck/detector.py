@@ -243,10 +243,22 @@ def _read_files_parallel(root: Path, patterns: list[str]) -> tuple[str, list[dic
             continue
         for p in matches:
             try:
+                is_link = p.is_symlink()
+            except OSError as exc:
+                failures.append({"path": _rel_read_path(p, root), "error": str(exc)})
+                continue
+            try:
                 if p.is_file():
                     files.append(p)
+                    continue
             except (OSError, RuntimeError) as exc:
                 failures.append({"path": _rel_read_path(p, root), "error": str(exc)})
+                continue
+            if is_link:
+                failures.append({
+                    "path": _rel_read_path(p, root),
+                    "error": "broken, inaccessible, or symlink loop",
+                })
 
     if not files:
         return "", failures

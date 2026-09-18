@@ -1,4 +1,3 @@
-import sys
 """driftcheck CLI."""
 from __future__ import annotations
 import argparse
@@ -6,6 +5,7 @@ import csv
 import json
 import io
 import difflib
+import sys
 from pathlib import Path
 from .detector import scan_repo, apply_fixes
 from .sarif import to_sarif
