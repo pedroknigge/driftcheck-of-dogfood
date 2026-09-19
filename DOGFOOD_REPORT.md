@@ -1,0 +1,23 @@
+# DOGFOOD_REPORT
+
+- arm: plain
+- wall_clock_minutes: 22
+- files_changed (6):
+  - src/driftcheck/detector.py
+  - src/driftcheck/cli.py
+  - src/driftcheck/sarif.py
+  - tests/test_read_files_parallel.py
+  - STATUS.md
+  - DOGFOOD_REPORT.md
+- tests_run: `pytest -q` (1210 tests) + `ruff check` + `mypy` on touched sources
+- pass/fail: pass (1210 passed, 2 warnings from existing plugin tests)
+- acceptance checklist:
+  - [x] Read failures in `_read_files_parallel` collected as `{path, error}` pairs
+  - [x] Failed-file count in scan summary (CLI + structured output)
+  - [x] `--verbose` prints each failure reason
+  - [x] Failed paths in SARIF under `skippedFiles` and `suppressions`
+  - [x] Binary heuristic: skip if first 512 bytes contain NUL
+  - [x] Unit tests: permission-denied, binary content, symlink loop
+- false_green: no
+- stalls_needing_poke: none
+- PR or branch URL: https://github.com/pedroknigge/driftcheck-of-dogfood/pull/2 (branch `cursor/fix-read-files-parallel-errors-c7e7`)
